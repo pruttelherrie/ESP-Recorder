@@ -1,0 +1,41 @@
+https://learn.adafruit.com/adafruit-vs1053-mp3-aac-ogg-midi-wav-play-and-record-codec-tutorial/ogg-recorder
+
+Power and Ground:
+
+    VCC -> 5v (VV)
+    GND -> GND
+
+Basic SPI connections:
+                        
+    SCLK -> Arduino #13 = NodeMCU D5
+    MOSI -> Arduino #11 = NodeMCU D7
+    MISO -> Arduino #12 = NodeMCU D6
+    CS -> Arduino #10   = NodeMCU D8 (GPIO15)
+
+Additional Control Signals:
+
+    SDCS -> Arduino A0  = NodeMCU D1 (GPIO5)
+    XDCS -> Arduino #8  = NodeMCU D2 (GPIO4)
+    RST -> Arduino #9   = NodeMCU SD2 (GPIO9) of aan RST?
+    DREQ -> Arduino A1  = NodeMCU SD3 (GPIO10)
+
+Start/Stop Button (Momentary):
+
+    from Arduino #7 to GND = NodeMCU D4 (GPIO2)
+
+
+https://github.com/paidforby/AsyncSDServer
+
+
+
+https://github.com/karawin/Ka-Radio/blob/master/ESP8266-Firmware/app/user/vs1053.c
+
+VS1053_WriteRegister(SPI_CLOCKF,0xB8,0x00);
+
+
+https://forums.adafruit.com/viewtopic.php?f=31&t=63377&start=15
+
+
+
+OGG EOS missing fix:
+https://forums.adafruit.com/viewtopic.php?t=101238

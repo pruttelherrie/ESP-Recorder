@@ -1,0 +1,221 @@
+#include <Arduino.h>
+
+/*************************************************** 
+  This is an example for the Adafruit VS1053 Codec Breakout
+
+  Designed specifically to work with the Adafruit VS1053 Codec Breakout 
+  ----> https://www.adafruit.com/products/1381
+
+  Adafruit invests time and resources providing this open source code, 
+  please support Adafruit and open-source hardware by purchasing 
+  products from Adafruit!
+
+  Written by Limor Fried/Ladyada for Adafruit Industries.  
+  BSD license, all text above must be included in any redistribution
+ ****************************************************/
+
+// This is a very beta demo of Ogg Vorbis recording. It works...
+// Connect a button to digital 7 on the Arduino and use that to
+// start and stop recording.
+
+// A mic or line-in connection is required. See page 13 of the 
+// datasheet for wiring
+
+// Don't forget to copy the v44k1q05.img patch to your micro SD 
+// card before running this example!
+
+
+// include SPI, MP3 and SD libraries
+#include <SPI.h>
+#include "SdFat.h"
+#define PREFER_SDFAT_LIBRARY
+#include <Adafruit_VS1053.h>
+
+
+using namespace sdfat;
+
+// define the pins used
+#define RESET 13     // XRESET, VS1053 reset pin (output), of aan RST.
+#define CS  4       // CS, VS1053 chip select pin (output)
+#define DCS 6        // XDCS, VS1053 Data/command select pin (output)
+#define CARDCS 5     // XCS, Card chip select pin
+#define DREQ 17       // DREQ, VS1053 Data request, ideally an Interrupt pin
+
+#define REC_BUTTON 16
+
+#define I2C_SDA 9
+#define I2C_SCL 10
+
+#define ESP32 1 
+
+#include <Wire.h>  // This library is already built in to the Arduino IDE
+//#include <LiquidCrystal_I2C.h> //This library you can add via Include Library > Manage Library >
+//LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+Adafruit_VS1053_FilePlayer musicPlayer = Adafruit_VS1053_FilePlayer(RESET, CS, DCS, DREQ, CARDCS);
+//Adafruit_VS1053_FilePlayer musicPlayer = Adafruit_VS1053_FilePlayer(CS, DCS, DREQ, CARDCS);
+
+SdFat32 sd;
+File32 recording;  // the file we will save our recording to
+
+#define RECBUFFSIZE 128  // 64 or 128 bytes.
+uint8_t recording_buffer[RECBUFFSIZE];
+
+
+uint16_t saveRecordedData(boolean isrecord) {
+  uint16_t written = 0;
+  
+    // read how many words are waiting for us
+  uint16_t wordswaiting = musicPlayer.recordedWordsWaiting();
+  
+  // try to process 256 words (512 bytes) at a time, for best speed
+  while (wordswaiting > 256) {
+    //Serial.print("Waiting: "); Serial.println(wordswaiting);
+    // for example 128 bytes x 4 loops = 512 bytes
+    for (int x=0; x < 512/RECBUFFSIZE; x++) {
+      // fill the buffer!
+      for (uint16_t addr=0; addr < RECBUFFSIZE; addr+=2) {
+        uint16_t t = musicPlayer.recordedReadWord();
+        //Serial.println(t, HEX);
+        recording_buffer[addr] = t >> 8; 
+        recording_buffer[addr+1] = t;
+      }
+      if (! recording.write(recording_buffer, RECBUFFSIZE)) {
+            Serial.print("Couldn't write "); Serial.println(RECBUFFSIZE); 
+            while (1);
+      }
+    }
+    // flush 512 bytes at a time
+    recording.flush();
+    written += 256;
+    wordswaiting -= 256;
+  }
+  
+  wordswaiting = musicPlayer.recordedWordsWaiting();
+  if (!isrecord) {
+    Serial.print(wordswaiting); Serial.println(" remaining");
+    // wrapping up the recording!
+    uint16_t addr = 0;
+    for (int x=0; x < wordswaiting-1; x++) {
+      // fill the buffer!
+      uint16_t t = musicPlayer.recordedReadWord();
+      recording_buffer[addr] = t >> 8; 
+      recording_buffer[addr+1] = t;
+      if (addr > RECBUFFSIZE) {
+          if (! recording.write(recording_buffer, RECBUFFSIZE)) {
+                Serial.println("Couldn't write!");
+                while (1);
+          }
+          recording.flush();
+          addr = 0;
+      }
+    }
+    if (addr != 0) {
+      if (!recording.write(recording_buffer, addr)) {
+        Serial.println("Couldn't write!"); while (1);
+      }
+      written += addr;
+    }
+    musicPlayer.sciRead(VS1053_SCI_AICTRL3);
+    if (! (musicPlayer.sciRead(VS1053_SCI_AICTRL3) & (1 << 2))) {
+       recording.write(musicPlayer.recordedReadWord() & 0xFF);
+       written++;
+    }
+    recording.flush();
+  }
+
+  return written;
+}
+
+void setup() {
+  //delay(500);
+  Serial.begin(115200);
+  Serial.println("VS1053 Ogg Recording Test");
+  delay(2000);
+  //Wire.begin(I2C_SDA, I2C_SCL);
+  //  lcd.init();   // initializing the LCD
+  //lcd.backlight(); // Enable or Turn On the backlight
+  //lcd.setCursor(0, 0);
+  // lcd.print("VS1053 Recorder ");
+  //delay(1000);
+  // initialise the music player
+  if (!musicPlayer.begin()) {
+    Serial.println("VS1053 not found");
+    //lcd.setCursor(0, 0); lcd.print("VS1053 not found");
+    while (1) delay(1000);  // don't do anything more
+  }
+  Serial.println("musicPlayer begun.");
+  delay(1000);
+
+  //musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
+ 
+  if (!sd.begin(CARDCS, SHARED_SPI)) {
+    Serial.println("SD failed, or not present");
+    //lcd.setCursor(0, 0); lcd.print("SD failed,      ");
+    //lcd.setCursor(0, 1); lcd.print("or not present  ");
+    while (1);  // don't do anything more
+  }
+  Serial.println("SD OK!");
+  //lcd.setCursor(0, 1); lcd.print("Ready.");
+  // Set volume for left, right channels. lower numbers == louder volume!
+  musicPlayer.setVolume(10,10);
+  
+  // when the button is pressed, record!
+  pinMode(REC_BUTTON, INPUT);
+  digitalWrite(REC_BUTTON, HIGH);
+  
+
+}
+
+uint8_t isRecording = false;
+
+void loop() {  
+  if (!isRecording && !digitalRead(REC_BUTTON)) {
+
+    // load plugin from SD card! We'll use mono 44.1KHz, high quality
+    if (! musicPlayer.prepareRecordOgg("v44k1q05.img")) {
+      Serial.println("Couldn't load plugin!");
+      //lcd.setCursor(0, 0); lcd.print("ERR: load plugin");
+      while (1);    
+    }
+
+    Serial.println("Begin recording");
+    //lcd.setCursor(0, 0); lcd.print("Recording...");
+    isRecording = true;
+    
+    // Check if the file exists already
+    char filename[15];
+    strcpy(filename, "RECORD00.OGG");
+    for (uint8_t i = 0; i < 100; i++) {
+      filename[6] = '0' + i/10;
+      filename[7] = '0' + i%10;
+      // create if does not exist, do not open existing, write, sync after write
+      if (! sd.exists(filename)) {
+        break;
+      }
+    }
+    Serial.print("Recording to "); Serial.println(filename);
+    //lcd.setCursor(0, 0); lcd.print("                ");
+    //lcd.setCursor(0, 1); lcd.print(filename);
+    recording = sd.open(filename, FILE_WRITE);
+    if (! recording) {
+       Serial.println("Couldn't open file to record!");
+      //lcd.setCursor(0, 1); lcd.print("ERR: file open  ");
+       while (1);
+    }
+    musicPlayer.startRecordOgg(false); // microphone = true,  linein = false
+  }
+  if (isRecording)
+    saveRecordedData(isRecording);
+  if (isRecording && digitalRead(REC_BUTTON)) {
+    Serial.println("End recording");
+    //lcd.setCursor(0, 0); lcd.print("Stopped         ");
+        musicPlayer.stopRecordOgg();
+    isRecording = false;
+    // flush all the data!
+    saveRecordedData(isRecording);
+    // close it up
+    recording.close();
+    delay(1000);
+  }
+}
